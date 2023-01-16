@@ -1,0 +1,68 @@
+#!/bin/sh
+set -e
+# stand alone script
+secset() { # set variables based on section ($s)
+  ht="${2%=*}"  # hook type
+  htv="${2#*=}" # hook type value
+  case "$1" in
+    (init) 
+      case "$ht" in
+        (post) [ "$htv" -eq 1 ] && ipost=1
+      esac
+      ;;
+    (push)
+      case "$ht" in
+        (pre)  [ "$htv" -eq 1 ] && ppre=1 ;;
+        (post) [ "$htv" -eq 1 ] && ppost=1
+      esac
+      ;;
+    (pull)
+      case "$ht" in
+        (post) [ "$htv" -eq 1 ] && Ppost=1
+      esac
+  esac
+}
+# 1 = active
+###
+# ipost = init post hook
+# ppre  = push pre hook
+# ppost = push post hook
+# Ppost = push post hook
+###
+cf() { # read config and pass to secet()
+  # use -e to allow for non files -- sockets, block devices, sym/hardlinks, etc. 
+  [ -e /etc/gh.conf ] || ${ERROR:?CONFIG MISSING: SEE README}
+  while read -r p || [ "$p" ]; do
+    case "$p" in
+      ('[init]') s=init;;
+      ('[push]') s=push;;
+      ('[pull]') s=pull;;
+      (*) secset "$s" "${p#${p%%[![:space:]]*}}";; # yank out leading spaces
+    esac
+  done < /etc/gh.conf
+}
+gc() {
+  # GitCase
+  cf # set config data
+  case "$1" in
+    (i) f="init";;
+    (p) f="push";;
+    (P) f="pull";;
+  esac
+  [ "$f" = "init" ] || {
+    git ${f} --dry-run || ${ERROR:?git $f FAILED DRY RUN... BAILING...}
+  }
+  # run git push dry and bail out if it results in an error
+  [ "$(eval $(printf 'echo ${%spre:-0}' "$1"))" -eq 1 ] && {
+    [ -e ${PREFIX:-/usr}/share/gh/pre-$f ] && ${PREFIX:-/usr}/share/gh/pre-$f
+  }
+  git ${f} || exit 1 || ${ERROR:?git $f FAILED... BAILING...}
+  [ "$(eval $(printf 'echo ${%spost:-0}' "$1"))" -eq 1 ] && {
+    [ -e ${PREFIX:-/usr}/share/gh/post-$f ] && ${PREFIX:-/usr}/share/gh/post-$f
+  }
+}
+case "$1" in
+  (i|init)    gc i;;
+  (p|push)    gc p;;
+  (P|pu|pull) gc P;;
+esac
